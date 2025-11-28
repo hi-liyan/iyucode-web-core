@@ -34,6 +34,9 @@ pub struct Settings {
     pub logging: LoggingConfig,
     /// SMTP 邮件配置
     pub smtp: SmtpConfig,
+    /// 自定义配置（业务层可以添加任意配置项）
+    #[serde(default)]
+    pub custom: std::collections::HashMap<String, String>,
 }
 
 /// 服务器配置
@@ -457,6 +460,7 @@ mod tests {
                 from_name: Some("Test App".to_string()),
                 timeout: 30,
             },
+            custom: std::collections::HashMap::new(),
         }
     }
 }
