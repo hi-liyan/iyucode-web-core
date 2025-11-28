@@ -20,5 +20,5 @@ pub mod settings;
 
 pub use settings::{
     CorsConfig, DatabaseConfig, DatabaseConnection, JwtConfig, LoggingConfig, ServerConfig,
-    Settings,
+    Settings, SmtpConfig,
 };

@@ -32,6 +32,8 @@ pub struct Settings {
     pub jwt: JwtConfig,
     /// 日志配置
     pub logging: LoggingConfig,
+    /// SMTP 邮件配置
+    pub smtp: SmtpConfig,
 }
 
 /// 服务器配置
@@ -200,6 +202,41 @@ pub struct LoggingConfig {
     ///
     /// 可选值: "json"（结构化JSON）, "pretty"（人类可读）
     pub format: String,
+}
+
+/// SMTP 邮件服务器配置
+#[derive(Debug, Clone, Deserialize)]
+pub struct SmtpConfig {
+    /// SMTP 服务器地址
+    ///
+    /// 示例: "smtp.gmail.com", "smtp.qq.com"
+    pub host: String,
+    /// SMTP 服务器端口
+    ///
+    /// 常用端口: 25 (非加密), 465 (SSL), 587 (TLS)
+    pub port: u16,
+    /// SMTP 用户名（邮箱地址）
+    ///
+    /// 示例: "noreply@example.com"
+    pub username: String,
+    /// SMTP 密码或授权码
+    pub password: String,
+    /// 发件人邮箱地址
+    ///
+    /// 示例: "noreply@example.com"
+    pub from: String,
+    /// 发件人显示名称（可选）
+    ///
+    /// 示例: "牛牛账簿"
+    #[serde(default)]
+    pub from_name: Option<String>,
+    /// 连接超时时间（秒），默认 30
+    #[serde(default = "default_smtp_timeout")]
+    pub timeout: u64,
+}
+
+fn default_smtp_timeout() -> u64 {
+    30
 }
 
 impl Settings {
@@ -391,6 +428,15 @@ mod tests {
             logging: LoggingConfig {
                 level: "info".to_string(),
                 format: "json".to_string(),
+            },
+            smtp: SmtpConfig {
+                host: "smtp.example.com".to_string(),
+                port: 587,
+                username: "noreply@example.com".to_string(),
+                password: "password".to_string(),
+                from: "noreply@example.com".to_string(),
+                from_name: Some("Test App".to_string()),
+                timeout: 30,
             },
         }
     }
