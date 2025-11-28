@@ -246,6 +246,7 @@ impl Settings {
     ///
     /// # 环境变量
     /// - `APP_ENV`: 指定环境（development, testing, production），默认 "development"
+    /// - `APP_CONFIG_DIR`: 配置文件目录，默认 "config"
     /// - `APP_*`: 覆盖配置项，使用 `__` 作为分隔符
     ///   - 示例: `APP_SERVER__PORT=8080` 覆盖 `server.port`
     ///   - 示例: `APP_DATABASE__URL=mysql://...` 覆盖 `database.url`
@@ -269,16 +270,34 @@ impl Settings {
     /// let settings = Settings::new().expect("Failed to load configuration");
     /// ```
     pub fn new() -> Result<Self, config::ConfigError> {
+        Self::from_dir("config")
+    }
+
+    /// 从指定目录加载配置
+    ///
+    /// # 参数
+    /// - `config_dir`: 配置文件目录路径
+    ///
+    /// # 示例
+    /// ```rust
+    /// use iyucode_core::config::Settings;
+    ///
+    /// // 从 server/config 目录加载配置
+    /// let settings = Settings::from_dir("server/config").expect("Failed to load configuration");
+    /// ```
+    pub fn from_dir(config_dir: &str) -> Result<Self, config::ConfigError> {
         // 获取当前环境，默认为 development
         let env = std::env::var("APP_ENV").unwrap_or_else(|_| "development".into());
 
         // 构建配置
         let config = config::Config::builder()
             // 1. 加载默认配置文件（可选）
-            .add_source(config::File::with_name("config/default").required(false))
+            .add_source(
+                config::File::with_name(&format!("{}/default", config_dir)).required(false),
+            )
             // 2. 加载环境特定配置文件（可选）
             .add_source(
-                config::File::with_name(&format!("config/{}", env)).required(false),
+                config::File::with_name(&format!("{}/{}", config_dir, env)).required(false),
             )
             // 3. 从环境变量加载配置（最高优先级）
             // 前缀: APP_

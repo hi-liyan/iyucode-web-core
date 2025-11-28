@@ -166,6 +166,13 @@ impl From<jsonwebtoken::errors::Error> for AppError {
     }
 }
 
+/// 从日志错误转换
+impl From<crate::logging::LoggingError> for AppError {
+    fn from(err: crate::logging::LoggingError) -> Self {
+        AppError::Internal(format!("Logging error: {}", err))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

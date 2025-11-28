@@ -111,6 +111,7 @@ pub mod error;
 pub mod logging;
 pub mod middleware;
 pub mod response;
+pub mod server;
 pub mod validation;
 pub mod utils;
 
@@ -141,3 +142,6 @@ pub use middleware::{setup_cors, AuthMiddleware, Claims, extract_claims};
 
 // 工具
 pub use utils::{PasswordHasher, RateLimiter, TimezoneConverter, Validator};
+
+// 服务器启动器
+pub use server::{ServerBuilder, run_server, run_server_with_config};
