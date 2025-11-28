@@ -39,7 +39,81 @@ tokio = { version = "1.48.0", features = ["full"] }
 
 ## 快速开始
 
-### 1. 基本使用
+### 1. 使用 ServerBuilder（推荐）
+
+最简单的方式是使用 `ServerBuilder` 来初始化所有基础设施：
+
+```rust
+use axum::{routing::get, Router, Extension};
+use iyucode_core::ServerBuilder;
+
+#[tokio::main]
+async fn main() {
+    // 使用 ServerBuilder 初始化基础设施
+    // 从 server/config 目录加载配置
+    let builder = ServerBuilder::from_config_dir("server/config")
+        .expect("加载配置失败")
+        .init_logging()
+        .expect("日志系统初始化失败")
+        .init_database()
+        .await
+        .expect("数据库初始化失败")
+        .setup_cors();
+
+    // 获取配置和组件
+    let (settings, db_pools, cors) = builder.build();
+    let db_pools = db_pools.expect("数据库连接池未初始化");
+
+    // 构建应用路由
+    let mut app = Router::new()
+        .route("/health", get(|| async { "OK" }))
+        .layer(Extension(db_pools));
+
+    // 添加 CORS 层
+    if let Some(cors_layer) = cors {
+        app = app.layer(cors_layer);
+    }
+
+    // 启动服务器
+    ServerBuilder::with_settings(settings)
+        .serve(app)
+        .await
+        .expect("服务器启动失败");
+}
+```
+
+### 2. 使用 run_server_with_config（更简洁）
+
+对于简单场景，可以使用辅助函数：
+
+```rust
+use axum::{routing::get, Router, Extension};
+use iyucode_core::run_server_with_config;
+
+#[tokio::main]
+async fn main() {
+    run_server_with_config("server/config", |settings, db_pools, cors| {
+        let mut app = Router::new()
+            .route("/health", get(|| async { "OK" }));
+
+        if let Some(pools) = db_pools {
+            app = app.layer(Extension(pools));
+        }
+
+        if let Some(cors_layer) = cors {
+            app = app.layer(cors_layer);
+        }
+
+        app
+    })
+    .await
+    .expect("服务器启动失败");
+}
+```
+
+### 3. 手动配置（灵活控制）
+
+如果需要更细粒度的控制：
 
 ```rust
 use axum::{routing::get, Router};
@@ -65,9 +139,40 @@ async fn hello_handler() -> Result<ApiResponse<String>> {
 }
 ```
 
-### 2. 配置管理
+## ServerBuilder API
 
-创建配置文件 `config/development.toml`：
+`ServerBuilder` 提供了统一的服务器初始化流程，封装了配置加载、日志初始化、数据库连接、CORS 配置等基础设施逻辑。
+
+### 构造方法
+
+- `ServerBuilder::new()` - 从默认 `config/` 目录加载配置
+- `ServerBuilder::from_config_dir(dir)` - 从指定目录加载配置
+- `ServerBuilder::with_settings(settings)` - 使用已有配置创建
+
+### 初始化方法（链式调用）
+
+- `init_logging()` - 初始化日志系统
+- `init_database()` - 初始化数据库连接池（异步）
+- `setup_cors()` - 配置 CORS
+
+### 访问方法
+
+- `settings()` - 获取配置的引用
+- `db_pools()` - 获取数据库连接池的引用
+- `build()` - 消费构建器，返回 `(Settings, Option<DatabasePools>, Option<CorsLayer>)`
+
+### 启动方法
+
+- `serve(app)` - 启动服务器（异步）
+
+### 辅助函数
+
+- `run_server(router_fn)` - 快速启动（使用默认配置目录）
+- `run_server_with_config(config_dir, router_fn)` - 快速启动（指定配置目录）
+
+### 4. 配置管理
+
+创建配置文件 `server/config/development.toml`：
 
 ```toml
 [server]
@@ -101,14 +206,25 @@ use iyucode_core::config::Settings;
 
 #[tokio::main]
 async fn main() {
-    // 加载配置（默认使用 development 环境）
+    // 方式1: 从默认 config/ 目录加载
     let settings = Settings::new().expect("Failed to load configuration");
+    
+    // 方式2: 从指定目录加载（推荐用于业务项目）
+    let settings = Settings::from_dir("server/config")
+        .expect("Failed to load configuration");
     
     println!("Server running on {}:{}", settings.server.host, settings.server.port);
 }
 ```
 
-### 3. 数据库连接
+**配置目录说明**：
+- 如果配置文件在业务项目的 `server/config/` 目录，使用 `Settings::from_dir("server/config")`
+- 如果配置文件在项目根目录的 `config/` 目录，使用 `Settings::new()`
+- `ServerBuilder` 会自动处理配置路径
+
+### 5. 数据库连接
+
+#### 单数据库模式
 
 ```rust
 use iyucode_core::database::DatabasePool;
@@ -116,7 +232,7 @@ use iyucode_core::config::Settings;
 
 #[tokio::main]
 async fn main() {
-    let settings = Settings::new().unwrap();
+    let settings = Settings::from_dir("server/config").unwrap();
     
     // 创建数据库连接池
     let db_pool = DatabasePool::new(&settings.database)
@@ -135,6 +251,37 @@ async fn main() {
     println!("Query result: {}", result.value);
 }
 ```
+
+#### 多数据库模式
+
+```rust
+use iyucode_core::database::DatabasePools;
+use iyucode_core::config::Settings;
+
+#[tokio::main]
+async fn main() {
+    let settings = Settings::from_dir("server/config").unwrap();
+    
+    // 创建多数据库连接池
+    let db_pools = DatabasePools::new(&settings.database)
+        .await
+        .expect("Failed to create database pools");
+    
+    // 获取指定数据库的连接池
+    let primary_pool = db_pools.get("primary")
+        .expect("Primary database not found");
+    
+    let secondary_pool = db_pools.get("secondary")
+        .expect("Secondary database not found");
+    
+    // 执行健康检查
+    db_pools.health_check().await.expect("Health check failed");
+    
+    println!("Database pools count: {}", db_pools.count());
+}
+```
+
+**注意**：`ServerBuilder` 会自动创建和管理数据库连接池，无需手动创建。
 
 ### 4. API 响应格式化
 
@@ -372,41 +519,38 @@ Validator::range("age", 25, 1, 120)?;
 Validator::url("https://example.com")?;
 ```
 
-### 10. 完整示例
+### 10. 完整示例（使用 ServerBuilder）
 
 ```rust
 use axum::{
     routing::{get, post},
     Router,
     middleware,
+    Extension,
 };
 use iyucode_core::{
-    config::Settings,
-    database::DatabasePool,
-    middleware::{setup_cors, AuthMiddleware},
+    ServerBuilder,
+    middleware::AuthMiddleware,
     ApiResponse,
     Result,
 };
 use tower_http::trace::TraceLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() {
-    // 初始化日志
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-
-    // 加载配置
-    let settings = Settings::new().expect("Failed to load configuration");
-
-    // 创建数据库连接池
-    let db_pool = DatabasePool::new(&settings.database)
+    // 使用 ServerBuilder 初始化所有基础设施
+    let builder = ServerBuilder::from_config_dir("server/config")
+        .expect("加载配置失败")
+        .init_logging()
+        .expect("日志系统初始化失败")
+        .init_database()
         .await
-        .expect("Failed to create database pool");
+        .expect("数据库初始化失败")
+        .setup_cors();
+
+    // 获取配置和组件
+    let (settings, db_pools, cors) = builder.build();
+    let db_pools = db_pools.expect("数据库连接池未初始化");
 
     // 创建认证中间件
     let auth_middleware = AuthMiddleware::new(settings.jwt.secret.clone());
@@ -424,24 +568,22 @@ async fn main() {
         }));
 
     // 组合路由
-    let app = Router::new()
+    let mut app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
-        .layer(setup_cors(&settings.cors))
-        .layer(TraceLayer::new_for_http())
-        .with_state(db_pool);
+        .layer(Extension(db_pools))
+        .layer(TraceLayer::new_for_http());
+
+    // 添加 CORS 层
+    if let Some(cors_layer) = cors {
+        app = app.layer(cors_layer);
+    }
 
     // 启动服务器
-    let addr = format!("{}:{}", settings.server.host, settings.server.port);
-    let listener = tokio::net::TcpListener::bind(&addr)
+    ServerBuilder::with_settings(settings)
+        .serve(app)
         .await
-        .expect("Failed to bind address");
-
-    tracing::info!("Server running on {}", addr);
-
-    axum::serve(listener, app)
-        .await
-        .expect("Failed to start server");
+        .expect("服务器启动失败");
 }
 
 async fn health_check() -> Result<ApiResponse<String>> {
@@ -455,6 +597,60 @@ async fn login() -> Result<ApiResponse<String>> {
 
 async fn get_users() -> Result<ApiResponse<Vec<String>>> {
     // 获取用户列表...
+    Ok(ApiResponse::success(vec!["user1".to_string(), "user2".to_string()]))
+}
+```
+
+### 11. 完整示例（使用 run_server_with_config）
+
+更简洁的方式：
+
+```rust
+use axum::{routing::{get, post}, Router, middleware, Extension};
+use iyucode_core::{run_server_with_config, middleware::AuthMiddleware, ApiResponse, Result};
+
+#[tokio::main]
+async fn main() {
+    run_server_with_config("server/config", |settings, db_pools, cors| {
+        let auth_middleware = AuthMiddleware::new(settings.jwt.secret.clone());
+
+        let public_routes = Router::new()
+            .route("/api/health", get(health_check))
+            .route("/api/login", post(login));
+
+        let protected_routes = Router::new()
+            .route("/api/users", get(get_users))
+            .layer(middleware::from_fn(move |req, next| {
+                auth_middleware.clone().authenticate(req, next)
+            }));
+
+        let mut app = Router::new()
+            .merge(public_routes)
+            .merge(protected_routes);
+
+        if let Some(pools) = db_pools {
+            app = app.layer(Extension(pools));
+        }
+
+        if let Some(cors_layer) = cors {
+            app = app.layer(cors_layer);
+        }
+
+        app
+    })
+    .await
+    .expect("服务器启动失败");
+}
+
+async fn health_check() -> Result<ApiResponse<String>> {
+    Ok(ApiResponse::success("OK".to_string()))
+}
+
+async fn login() -> Result<ApiResponse<String>> {
+    Ok(ApiResponse::success("token".to_string()))
+}
+
+async fn get_users() -> Result<ApiResponse<Vec<String>>> {
     Ok(ApiResponse::success(vec!["user1".to_string(), "user2".to_string()]))
 }
 ```
@@ -730,6 +926,18 @@ MIT License
 
 ## 更新日志
 
+### v0.1.2 (2024-11-28)
+
+- ✨ 新增 `ServerBuilder` API
+  - 统一的服务器初始化流程
+  - 支持自定义配置目录
+  - 链式 API 设计
+  - 自动管理数据库连接池和 CORS
+- ✨ 新增 `run_server_with_config` 辅助函数
+- ✨ `Settings::from_dir()` 支持自定义配置目录
+- 📝 更新文档和示例
+- 🔧 优化配置加载逻辑
+
 ### v0.1.1 (2024-11-15)
 
 - ✨ 新增工具模块（utils）
@@ -744,7 +952,7 @@ MIT License
 
 - 🎉 初始版本发布
 - 支持多环境配置
-- MySQL 数据库连接池
+- MySQL 数据库连接池（支持单库和多库模式）
 - API 响应格式化
 - 请求验证
 - JWT 认证中间件
